@@ -609,6 +609,28 @@ void DalyBms::callback(std::function<void()> func) // callback function when fin
 
 bool DalyBms::requestData(COMMAND cmdID, unsigned int frameAmount) // new function to request global data
 {
+    return this->requestDataWithRetry(cmdID, frameAmount, 1);
+}
+
+bool DalyBms::requestDataWithRetry(COMMAND cmdID, unsigned int frameAmount, unsigned int maxRetries)
+{
+    for (unsigned int attempt = 0; attempt <= maxRetries; attempt++)
+    {
+        if (attempt > 0)
+        {
+            delay(30); // short pause before retry
+        }
+
+        if (this->requestDataInternal(cmdID, frameAmount))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool DalyBms::requestDataInternal(COMMAND cmdID, unsigned int frameAmount)
+{
     // Clear out the buffers
     memset(this->my_rxFrameBuffer, 0x00, sizeof(this->my_rxFrameBuffer));
     memset(this->frameBuff, 0x00, sizeof(this->frameBuff));
@@ -641,8 +663,10 @@ bool DalyBms::requestData(COMMAND cmdID, unsigned int frameAmount) // new functi
     // first wait for transmission end
     this->my_serialIntf->flush();
 
-    // give the BMS time to process and start responding
-    delay(20);
+    // scale delay based on expected response size:
+    // BMS needs time to process + transmit all frames
+    // at 9600 baud each 13-byte frame takes ~14ms on the wire
+    delay(20 + (frameAmount - 1) * 16);
     //-------------------------------------------
 
     //-----------Recive Part---------------------
@@ -653,7 +677,6 @@ bool DalyBms::requestData(COMMAND cmdID, unsigned int frameAmount) // new functi
         writeLog("<BMS > Incomplete response for cmd 0x%02X: expected %d, got %d", cmdID, expectedBytes, rxByteNum);
         return false;
     }
-
     for (size_t i = 0; i < frameAmount; i++)
     {
         for (size_t j = 0; j < XFER_BUFFER_LENGTH; j++)

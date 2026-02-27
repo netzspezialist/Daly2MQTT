@@ -338,6 +338,8 @@ private:
      * @details calculates the checksum and sends the command over the specified serial connection
      */
     bool requestData(COMMAND cmdID, unsigned int frameAmount);
+    bool requestDataWithRetry(COMMAND cmdID, unsigned int frameAmount, unsigned int maxRetries);
+    bool requestDataInternal(COMMAND cmdID, unsigned int frameAmount);
 
     /**
      * @brief Sends a complete packet with the specified command
