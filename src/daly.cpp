@@ -609,7 +609,7 @@ void DalyBms::callback(std::function<void()> func) // callback function when fin
 
 bool DalyBms::requestData(COMMAND cmdID, unsigned int frameAmount) // new function to request global data
 {
-    return this->requestDataWithRetry(cmdID, frameAmount, 1);
+    return this->requestDataWithRetry(cmdID, frameAmount, 2);
 }
 
 bool DalyBms::requestDataWithRetry(COMMAND cmdID, unsigned int frameAmount, unsigned int maxRetries)
