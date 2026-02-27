@@ -36,7 +36,7 @@ bool DalyBms::Init()
 
 bool DalyBms::loop()
 {
-    if (millis() - previousTime >= DELAYTINME)
+    if (millis() - previousTime >= DELAYTIME)
     {
         switch (requestCounter)
         {
@@ -630,14 +630,30 @@ bool DalyBms::requestData(COMMAND cmdID, unsigned int frameAmount) // new functi
     // put it on the frame
     this->my_txBuffer[12] = txChecksum;
 
+    // flush stale data from RX buffer before sending
+    while (this->my_serialIntf->available() > 0)
+    {
+        this->my_serialIntf->read();
+    }
+
     // send the packet
     this->my_serialIntf->write(this->my_txBuffer, XFER_BUFFER_LENGTH);
     // first wait for transmission end
     this->my_serialIntf->flush();
+
+    // give the BMS time to process and start responding
+    delay(20);
     //-------------------------------------------
 
     //-----------Recive Part---------------------
-    /*uint8_t rxByteNum = */ this->my_serialIntf->readBytes(this->my_rxFrameBuffer, XFER_BUFFER_LENGTH * frameAmount);
+    unsigned int expectedBytes = XFER_BUFFER_LENGTH * frameAmount;
+    uint8_t rxByteNum = this->my_serialIntf->readBytes(this->my_rxFrameBuffer, expectedBytes);
+    if (rxByteNum != expectedBytes)
+    {
+        writeLog("<BMS > Incomplete response for cmd 0x%02X: expected %d, got %d", cmdID, expectedBytes, rxByteNum);
+        return false;
+    }
+
     for (size_t i = 0; i < frameAmount; i++)
     {
         for (size_t j = 0; j < XFER_BUFFER_LENGTH; j++)

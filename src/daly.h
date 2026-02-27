@@ -18,7 +18,7 @@ https://github.com/softwarecrash/DALY2MQTT
 #define ERRORCOUNTER 10 //number of try befor clear data
 
 //time in ms for delay the bms requests, to fast brings connection error
-#define DELAYTINME 150
+#define DELAYTIME 200
 
 class DalyBms
 {
