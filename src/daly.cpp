@@ -26,8 +26,10 @@ bool DalyBms::Init()
         return false;
     }
 
-    // Initialize the serial link to 9600 baud with 8 data bits and no parity bits, per the Daly BMS spec
-    this->my_serialIntf->begin(9600, SWSERIAL_8N1, soft_rx, soft_tx, false);
+    // RX buffer must be large enough for the biggest multi-frame response:
+    // 0x95 Cell Voltages with 16 cells = ceil(16/3) * 13 = 78 bytes
+    // Default SoftwareSerial buffer is only 64 bytes - too small!
+    this->my_serialIntf->begin(9600, SWSERIAL_8N1, soft_rx, soft_tx, false, 128);
 
     memset(this->my_txBuffer, 0x00, XFER_BUFFER_LENGTH);
     clearGet();
@@ -151,9 +153,9 @@ bool DalyBms::getPackMeasurements() // 0x90
 {
     if (!this->requestData(COMMAND::VOUT_IOUT_SOC, 1))
     {
-        writeLog("<BMS > Receive failed %d", VOUT_IOUT_SOC);
+        writeLog("<BMS > Receive failed 0x%02X - keep old values", VOUT_IOUT_SOC);
         clearGet();
-        return false;
+        return true;
     }
     else
         // check if packCurrent in range
@@ -181,8 +183,8 @@ bool DalyBms::getMinMaxCellVoltage() // 0x91
 {
     if (!this->requestData(COMMAND::MIN_MAX_CELL_VOLTAGE, 1))
     {
-        writeLog("<BMS > Receive failed %d", MIN_MAX_CELL_VOLTAGE);
-        return false;
+        writeLog("<BMS > Receive failed 0x%02X - keep old values", MIN_MAX_CELL_VOLTAGE);
+        return true;
     }
 
     get.maxCellmV = (float)((this->frameBuff[0][4] << 8) | this->frameBuff[0][5]);
@@ -198,8 +200,8 @@ bool DalyBms::getPackTemp() // 0x92
 {
     if (!this->requestData(COMMAND::MIN_MAX_TEMPERATURE, 1))
     {
-        writeLog("<BMS > Receive failed %d", MIN_MAX_TEMPERATURE);
-        return false;
+        writeLog("<BMS > Receive failed 0x%02X - keep old values", MIN_MAX_TEMPERATURE);
+        return true;
     }
     get.tempAverage = ((this->frameBuff[0][4] - 40) + (this->frameBuff[0][6] - 40)) / 2;
 
@@ -210,8 +212,8 @@ bool DalyBms::getDischargeChargeMosStatus() // 0x93
 {
     if (!this->requestData(COMMAND::DISCHARGE_CHARGE_MOS_STATUS, 1))
     {
-        writeLog("<BMS > Receive failed %d", DISCHARGE_CHARGE_MOS_STATUS);
-        return false;
+        writeLog("<BMS > Receive failed 0x%02X - keep old values", DISCHARGE_CHARGE_MOS_STATUS);
+        return true;
     }
 
     switch (this->frameBuff[0][4])
@@ -288,7 +290,12 @@ bool DalyBms::getCellVoltages() // 0x95
     }
     else
     {
-        return false;
+        // 0x95 is the only multi-frame command (78 bytes for 16 cells).
+        // On ESP8266, WiFi interrupts can cause SoftwareSerial to lose bytes
+        // during the ~81ms receive window. Instead of failing and restarting
+        // the state machine, keep the last successful cell voltage values.
+        writeLog("<BMS > 0x95 failed, keeping last cell voltages");
+        return true;
     }
 }
 
@@ -607,29 +614,7 @@ void DalyBms::callback(std::function<void()> func) // callback function when fin
 // Private Functions
 //----------------------------------------------------------------------
 
-bool DalyBms::requestData(COMMAND cmdID, unsigned int frameAmount) // new function to request global data
-{
-    return this->requestDataWithRetry(cmdID, frameAmount, 2);
-}
-
-bool DalyBms::requestDataWithRetry(COMMAND cmdID, unsigned int frameAmount, unsigned int maxRetries)
-{
-    for (unsigned int attempt = 0; attempt <= maxRetries; attempt++)
-    {
-        if (attempt > 0)
-        {
-            delay(30); // short pause before retry
-        }
-
-        if (this->requestDataInternal(cmdID, frameAmount))
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool DalyBms::requestDataInternal(COMMAND cmdID, unsigned int frameAmount)
+bool DalyBms::requestData(COMMAND cmdID, unsigned int frameAmount)
 {
     // Clear out the buffers
     memset(this->my_rxFrameBuffer, 0x00, sizeof(this->my_rxFrameBuffer));
@@ -666,12 +651,13 @@ bool DalyBms::requestDataInternal(COMMAND cmdID, unsigned int frameAmount)
     // scale delay based on expected response size:
     // BMS needs time to process + transmit all frames
     // at 9600 baud each 13-byte frame takes ~14ms on the wire
-    delay(20 + (frameAmount - 1) * 16);
+    delay(25 + (frameAmount - 1) * 16);
     //-------------------------------------------
 
     //-----------Recive Part---------------------
     unsigned int expectedBytes = XFER_BUFFER_LENGTH * frameAmount;
     uint8_t rxByteNum = this->my_serialIntf->readBytes(this->my_rxFrameBuffer, expectedBytes);
+
     if (rxByteNum != expectedBytes)
     {
         writeLog("<BMS > Incomplete response for cmd 0x%02X: expected %d, got %d", cmdID, expectedBytes, rxByteNum);
@@ -695,12 +681,12 @@ bool DalyBms::requestDataInternal(COMMAND cmdID, unsigned int frameAmount)
 
         if (rxChecksum != this->frameBuff[i][XFER_BUFFER_LENGTH - 1])
         {
-            writeLog("<BMS > CRC FAIL");
+            writeLog("<BMS > CRC FAIL for cmd 0x%02X:", cmdID);
             return false;
         }
         if (rxChecksum == 0)
         {
-            writeLog("<BMS > NO DATA");
+            writeLog("<BMS > NO DATA for cmd 0x%02X:", cmdID);
             return false;
         }
         if (this->frameBuff[i][1] >= 0x20)
